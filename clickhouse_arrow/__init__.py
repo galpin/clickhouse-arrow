@@ -10,7 +10,6 @@ Example usage:
 >>>     p1=2,
 >>>     p2=2,
 >>> )
-
 """
 
 from typing import Any, Iterator
