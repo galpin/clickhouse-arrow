@@ -126,6 +126,13 @@ class Client:
         ensure_success_status(response)
 
 
+def build_url(url: str, **querystring) -> str:
+    if not url.endswith("?"):
+        url += "?"
+    url += urlencode(querystring)
+    return url
+
+
 def create_post_body(query: str, params: dict[str, Any]):
     body = {"query": query}
     if params:
@@ -136,13 +143,6 @@ def create_post_body(query: str, params: dict[str, Any]):
 def ensure_success_status(response: urllib3.HTTPResponse):
     if response.status != 200:
         raise Exception(f"Unexepcted HTTP status code: {response.status}")
-
-
-def build_url(url: str, **querystring) -> str:
-    if not url.endswith("?"):
-        url += "?"
-    url += urlencode(querystring)
-    return url
 
 
 def serialize_ipc(table: pa.Table) -> bytes:
