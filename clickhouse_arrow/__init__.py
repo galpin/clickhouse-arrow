@@ -110,9 +110,8 @@ class Client:
         Raises:
             Exception: The HTTP response status did not indicate success.
         """
-        columns = data.column_names
-        columns = f" ({', '.join(c for c in columns)})"
-        query = f"INSERT INTO {table}{columns} FORMAT Arrow"
+        columns = ', '.join(c for c in data.column_names)
+        query = f"INSERT INTO {table} ({columns}) FORMAT Arrow"
         params = urlencode({"query": query})
         url = f"{self._url}&{params}"
         headers = {"Content-Type": "application/octet-stream"}
