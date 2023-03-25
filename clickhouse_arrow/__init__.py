@@ -138,7 +138,7 @@ class Client:
         Raises:
             ClickhouseException: When a non-success response status was received.
         """
-        columns = ", ".join(f'`{c}`' for c in data.column_names)
+        columns = ", ".join(f"`{c}`" for c in data.column_names)
         query = f"INSERT INTO {table} ({columns}) FORMAT Arrow"
         params = urlencode({"query": query})
         url = f"{self._url}&{params}"
