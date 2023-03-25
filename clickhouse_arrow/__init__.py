@@ -15,9 +15,14 @@ Example usage:
 """
 from typing import Any, Iterator
 from urllib.parse import urlencode
+from importlib_metadata import version
+
 
 import pyarrow as pa
 import urllib3
+
+
+__version__ = version(__package__)
 
 
 class Client:
