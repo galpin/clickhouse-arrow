@@ -15,12 +15,10 @@ Example usage:
 """
 from typing import Any, Iterator
 from urllib.parse import urlencode
-from importlib_metadata import version
-
 
 import pyarrow as pa
 import urllib3
-
+from importlib_metadata import version
 
 __version__ = version(__package__)
 
@@ -184,6 +182,7 @@ class ClickhouseException(Exception):
         status: (int) The response status code.
         body: (str) The response body (this may include a message from the server).
     """
+
     def __init__(self, status, body):
         super().__init__(f"Unexpected HTTP response status code: {status}.")
         self.status = status

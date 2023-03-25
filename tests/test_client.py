@@ -32,11 +32,7 @@ def test_read_table(sut):
 
 
 def test_read_table_with_parameters(sut):
-    expected = pa.Table.from_pydict(
-        {
-            "ints": [10]
-        }
-    )
+    expected = pa.Table.from_pydict({"ints": [10]})
     actual = sut.read_table(
         """
         SELECT ints FROM numbers
