@@ -1,18 +1,3 @@
-"""
-Provides a minimal client that uses the ClickHouse HTTP API and Apache Arrow.
-
-Example usage:
-
->>> import clickhouse_arrow as ch
->>> client = ch.Client()
->>> client.read_table(
->>>     "select {p1:UInt8} + {p2:UInt8} as life",
->>>     params=dict(
->>>         p1=2,
->>>         p2=2,
->>>     ),
->>> )
-"""
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
