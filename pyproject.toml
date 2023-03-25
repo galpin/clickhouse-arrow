@@ -1,9 +1,12 @@
 [tool.poetry]
 name = "clickhouse-arrow"
-version = "0.1.0"
+version = "0.1.1"
 description = "A minimal client that uses the ClickHouse HTTP API and Apache Arrow."
 authors = ["Martin Galpin <galpin@galpin.com>"]
+homepage = "https://github.com/galpin/clickhouse-arrow"
+repository = "https://github.com/galpin/clickhouse-arrow"
 readme = "README.md"
+
 
 [tool.poetry.dependencies]
 python = "^3.9"
