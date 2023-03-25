@@ -1,0 +1,7 @@
+services:
+  clickhouse:
+    image: bitnami/clickhouse:22.3.19-debian-11-r5
+    ports:
+      - 8123:8123
+    environment:
+      - CLICKHOUSE_ADMIN_PASSWORD=test
