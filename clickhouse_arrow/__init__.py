@@ -69,6 +69,29 @@ class Client:
         """
         return self._execute(query, params, settings).data
 
+    def open_stream(
+        self,
+        query: str,
+        params: dict[str, Any] = None,
+        settings: dict[str, Any] = None,
+    ) -> pa.RecordBatchStreamReader:
+        """
+        Execute a query and open a stream to read the result using the ArrowStream format.
+
+        Args:
+            query: (str) The query to execute.
+            params: (dict) The optional named query parameters (bound server-side).
+            settings: (dict) The optional request settings.
+
+        Returns:
+            A `pa.RecordBatchStreamReader` instance that reads the response.
+
+        Raises:
+            ClickhouseException: When a non-success response status was received.
+        """
+        response = self._execute(query, params, settings, format_="ArrowStream")
+        return pa.ipc.open_stream(response)
+
     def read_table(
         self,
         query: str,
@@ -90,7 +113,8 @@ class Client:
         Raises:
             ClickhouseException: When a non-success response status was received.
         """
-        return pa.Table.from_batches(self.read_batches(query, params, settings))
+        batches = self.read_batches(query, params, settings)
+        return pa.Table.from_batches(batches)
 
     def read_batches(
         self,
@@ -114,13 +138,12 @@ class Client:
         Raises:
             ClickhouseException: When a non-success response status was received.
         """
-        with self._execute(query, params, settings, format_="ArrowStream") as response:
-            with pa.ipc.open_stream(response) as reader:
-                try:
-                    while True:
-                        yield reader.read_next_batch()
-                except StopIteration:
-                    pass
+        with self.open_stream(query, params, settings) as reader:
+            try:
+                while True:
+                    yield reader.read_next_batch()
+            except StopIteration:
+                pass
 
     def insert(self, table: str, data: pa.Table):
         """
