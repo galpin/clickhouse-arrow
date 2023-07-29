@@ -27,9 +27,9 @@ class Client:
     A minimal client that uses the ClickHouse HTTP API and Apache Arrow.
 
     Args:
-       url: (str) The host name of the server to connect to.
-       user: (str) The optional username to authenticate with.
-       password: (str) The optional password to authenticate with.
+       url: (str) The host name of the server to connect to, defaults to `http://localhost:8123/`.
+       user: (str) The optional username to authenticate with, defaults to `default`.
+       password: (str) The optional password to authenticate with, defaults to empty.
        pool: (PoolManager) The optional HTTP connection pool to use.
     """
 
@@ -40,11 +40,11 @@ class Client:
         password: str = "",
         pool: urllib3.PoolManager = None,
     ):
-        self._url = build_url(
-            url,
-            user=user,
-            password=password,
-        )
+        self._url = url
+        self._headers = {
+            "X-ClickHouse-User": user,
+            "X-ClickHouse-Key": password,
+        }
         self._pool = pool or urllib3.PoolManager()
 
     def execute(
@@ -160,9 +160,8 @@ class Client:
         """
         columns = ", ".join(f"`{c}`" for c in data.column_names)
         query = f"INSERT INTO {table} ({columns}) FORMAT Arrow"
-        params = urlencode({"query": query})
-        url = f"{self._url}&{params}"
-        headers = {"Content-Type": "application/octet-stream"}
+        url = append_url(self._url, query=query)
+        headers = self._headers | {"Content-Type": "application/octet-stream"}
         body = serialize_ipc(data)
         response = self._pool.urlopen(
             "POST",
@@ -183,7 +182,7 @@ class Client:
             query += f" FORMAT {format_}"
         fields = create_post_body(query, params)
         body, content_type = urllib3.encode_multipart_formdata(fields)
-        headers = {"Content-Type": content_type}
+        headers = self._headers | {"Content-Type": content_type}
         url = append_url(self._url, **settings) if settings else self._url
         response = self._pool.urlopen(
             "POST",
@@ -211,12 +210,8 @@ class ClickhouseException(Exception):
         self.body = body
 
 
-def build_url(url: str, **query) -> str:
-    return f"{url}{'?' if not url.endswith('?') else ''}{urlencode(query)}"
-
-
 def append_url(url: str, **query) -> str:
-    return f"{url}&{urlencode(query)}"
+    return f"{url}?{urlencode(query)}"
 
 
 def create_post_body(query: str, params: dict[str, Any]):
