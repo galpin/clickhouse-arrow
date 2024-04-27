@@ -31,6 +31,7 @@ class Client:
        user: (str) The optional username to authenticate with, defaults to `default`.
        password: (str) The optional password to authenticate with, defaults to empty.
        pool: (PoolManager) The optional HTTP connection pool to use.
+       default_settings: (dict) The optional default settings to include with every query.
     """
 
     def __init__(
@@ -39,6 +40,7 @@ class Client:
         user: str = "default",
         password: str = "",
         pool: urllib3.PoolManager = None,
+        default_settings: dict[str, Any] = None,
     ):
         self._url = url
         self._headers = {
@@ -46,6 +48,7 @@ class Client:
             "X-ClickHouse-Key": password,
         }
         self._pool = pool or urllib3.PoolManager()
+        self._default_settings = default_settings
 
     def execute(
         self,
@@ -183,6 +186,7 @@ class Client:
         fields = create_post_body(query, params)
         body, content_type = urllib3.encode_multipart_formdata(fields)
         headers = self._headers | {"Content-Type": content_type}
+        settings = self._combine_settings(settings)
         url = append_url(self._url, **settings) if settings else self._url
         response = self._pool.urlopen(
             "POST",
@@ -193,6 +197,18 @@ class Client:
         )
         ensure_success_status(response)
         return response
+
+    def _combine_settings(
+        self, settings: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        match (settings, self._default_settings):
+            case (None, _):
+                return self._default_settings
+            case (_, None):
+                return settings
+            case (_, _):
+                return self._default_settings | settings
+        return None
 
 
 class ClickhouseException(Exception):

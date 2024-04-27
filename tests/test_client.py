@@ -18,6 +18,7 @@ import pyarrow as pa
 import pytest
 
 from clickhouse_arrow import ClickhouseException
+from .conftest import create_client
 
 
 def test_insert_table(sut):
@@ -91,6 +92,21 @@ def test_execute_with_parameters(sut):
 
 
 def test_execute_with_settings(sut):
+    actual = sut.execute(
+        "SELECT ints FROM numbers FORMAT JSONEachRow",
+        settings={"limit": 1},
+    )
+    assert json.loads(actual) == {"ints": "0"}
+
+
+def test_execute_with_default_settings(clickhouse):
+    sut = create_client(clickhouse, default_settings={"limit": 1})
+    actual = sut.execute("SELECT ints FROM numbers FORMAT JSONEachRow")
+    assert json.loads(actual) == {"ints": "0"}
+
+
+def test_execute_with_default_and_query_settings(clickhouse):
+    sut = create_client(clickhouse, default_settings={"limit": 42})
     actual = sut.execute(
         "SELECT ints FROM numbers FORMAT JSONEachRow",
         settings={"limit": 1},
