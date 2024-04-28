@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections.abc
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
@@ -233,8 +234,28 @@ def append_url(url: str, **query) -> str:
 def create_post_body(query: str, params: dict[str, Any]):
     body = {"query": query}
     if params:
-        body.update({f"param_{k}": v for k, v in params.items()})
+        body.update({f"param_{k}": bind_param(v) for k, v in params.items()})
     return body
+
+
+def bind_param(value: Any, quote_strings=False) -> str:
+    # Inspired by clickhouse-connect.
+    if value is None:
+        return "NULL"
+    if isinstance(value, (bool, int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return f"'{value}'" if quote_strings else value
+    if isinstance(value, tuple):
+        return f"({', '.join([bind_param(v, True) for v in value])})"
+    if isinstance(value, dict):
+        pairs = (
+            bind_param(k, True) + ":" + bind_param(v, True) for k, v in value.items()
+        )
+        return f"{{{', '.join(pairs)}}}"
+    if isinstance(value, collections.abc.Iterable):
+        return f"[{', '.join([bind_param(v, True) for v in value])}]"
+    return str(value)
 
 
 def ensure_success_status(response: urllib3.HTTPResponse):
