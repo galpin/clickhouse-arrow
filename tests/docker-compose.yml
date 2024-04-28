@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: bitnami/clickhouse:22.3.19-debian-11-r5
+    image: bitnami/clickhouse:23.8.13-debian-12-r0
     ports:
       - 8123:8123
     environment:
