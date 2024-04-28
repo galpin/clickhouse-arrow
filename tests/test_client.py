@@ -18,11 +18,12 @@ import pyarrow as pa
 import pytest
 
 from clickhouse_arrow import ClickhouseException
+from .conftest import create_client
 
 
 def test_insert_table(sut):
     actual = sut.read_table(
-        "SELECT * FROM numbers",
+        "select * from numbers",
         settings={"output_format_arrow_string_as_string": 1},
     )
     assert actual.equals(NUMBERS)
@@ -35,7 +36,7 @@ def test_read_table(sut):
             "strs": [b"0", b"1", b"2"],
         }
     )
-    actual = sut.read_table("SELECT * FROM numbers LIMIT 3")
+    actual = sut.read_table("select * from numbers limit 3")
     assert actual.equals(expected)
     assert actual.schema == pa.schema(
         [
@@ -49,9 +50,9 @@ def test_read_table_with_parameters(sut):
     expected = pa.Table.from_pydict({"ints": [10]})
     actual = sut.read_table(
         """
-        SELECT ints FROM numbers
-        WHERE ints = {i:Int64} AND strs = {s:String}
-        LIMIT 1
+        select ints from numbers
+        where ints = {i:Int64} and strs = {s:String}
+        limit 1
         """,
         params={
             "i": 10,
@@ -70,32 +71,150 @@ def test_execute_raises_when_non_success_status(sut):
 
 
 def test_execute(sut):
-    actual = sut.execute("SELECT * FROM numbers LIMIT 1 FORMAT JSONEachRow")
-    assert json.loads(actual) == {"ints": "0", "strs": "0"}
+    actual = sut.execute("select strs from numbers limit 1 format JSONEachRow")
+    assert json.loads(actual) == {"strs": "0"}
 
 
 def test_execute_with_parameters(sut):
-    actual = sut.execute(
+    actual = sut.read_table(
         """
-        SELECT * FROM numbers
-        WHERE ints = {i:Int64} AND strs = {s:String}
-        LIMIT 1
-        FORMAT JSONEachRow
+        select * from numbers
+        where ints = {i:Int64} AND strs = {s:String}
+        limit 1
         """,
         params={
             "i": 10,
             "s": "10",
         },
     )
-    assert json.loads(actual) == {"ints": "10", "strs": "10"}
+    assert_table(actual, {"ints": [10], "strs": [b"10"]})
 
 
 def test_execute_with_settings(sut):
     actual = sut.execute(
-        "SELECT ints FROM numbers FORMAT JSONEachRow",
+        "select ints from numbers format JSONEachRow",
         settings={"limit": 1},
     )
     assert json.loads(actual) == {"ints": "0"}
+
+
+def test_execute_with_default_settings(clickhouse):
+    sut = create_client(clickhouse, default_settings={"limit": 1})
+    actual = sut.execute("select ints from numbers format JSONEachRow")
+    assert json.loads(actual) == {"ints": "0"}
+
+
+def test_execute_with_default_and_query_settings(clickhouse):
+    sut = create_client(clickhouse, default_settings={"limit": 42})
+    actual = sut.execute(
+        "select ints from numbers format JSONEachRow",
+        settings={"limit": 1},
+    )
+    assert json.loads(actual) == {"ints": "0"}
+
+
+def test_execute_with_int_parameter(sut):
+    actual = sut.read_table(
+        "select {expected:Int64} as actual",
+        params={"expected": 10},
+    )
+    assert_table(actual, {"actual": [10]})
+
+
+def test_execute_with_str_parameter(sut):
+    actual = sut.read_table(
+        "select {expected:String} as actual",
+        params={"expected": "10"},
+    )
+    assert_table(actual, {"actual": [b"10"]})
+
+
+@pytest.mark.parametrize(
+    "param_type, param, expected",
+    [
+        [
+            "Array(Int64)",
+            [1, 2, 3],
+            {"actual": [[1, 2, 3]]},
+        ],
+        [
+            "Array(String)",
+            ["1", "2", "3"],
+            {"actual": [[b"1", b"2", b"3"]]},
+        ],
+    ],
+)
+def test_execute_with_array_parameter(sut, param_type, param, expected):
+    actual = sut.read_table(
+        f"select {{expected:{param_type}}} as actual",
+        params={"expected": param},
+    )
+    assert_table(actual, expected)
+
+
+def test_execute_with_tuple_parameter(sut):
+    actual = sut.read_table(
+        "select {expected:Tuple(Int64, Int64, Int64)} as actual",
+        params={"expected": (1, 2, 3)},
+    )
+    assert_table(actual, {"actual": [{"1": 1, "2": 2, "3": 3}]})
+
+
+def test_execute_with_null_parameter(sut):
+    actual = sut.read_table(
+        "select {expected:Nullable(String)} as actual",
+        params={"expected": None},
+    )
+    assert_table(actual, {"actual": [b"NULL"]})
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [True, False],
+)
+def test_execute_with_bool_parameter(sut, expected):
+    actual = sut.read_table(
+        "select {expected:Bool} as actual",
+        params={"expected": expected},
+    )
+    assert_table(actual, {"actual": [expected]})
+
+
+@pytest.mark.parametrize(
+    "param_type, param, expected",
+    [
+        [
+            "Map(String, Int64)",
+            {"a": 1, "b": 2},
+            {"actual": [[(b"a", 1), (b"b", 2)]]},
+        ],
+        [
+            "Map(Int64, String)",
+            {1: "a", 2: "b"},
+            {"actual": [[(1, b"a"), (2, b"b")]]},
+        ],
+        [
+            "Map(Int64, Array(Int64))",
+            {1: [1, 2, 3]},
+            {"actual": [[(1, [1, 2, 3])]]},
+        ],
+        [
+            "Map(Int64, Map(String, String))",
+            {1: {"a": "b"}},
+            {"actual": [[(1, [(b"a", b"b")])]]},
+        ],
+    ],
+)
+def test_execute_with_map_parameter(sut, param_type, param, expected):
+    actual = sut.read_table(
+        f"select {{expected:{param_type}}} as actual",
+        params={"expected": param},
+    )
+    assert_table(actual, expected)
+
+
+def assert_table(actual, expected):
+    assert actual.to_pydict() == expected
 
 
 @pytest.fixture
@@ -105,14 +224,14 @@ def sut(client):
 
 
 def init_db(sut):
-    sut.execute("DROP TABLE IF EXISTS numbers")
+    sut.execute("drop table if exists numbers")
     sut.execute(
         """
-        CREATE TABLE numbers (
+        create table numbers (
             ints Int64 NULL,
             strs String NULL
         )
-        ENGINE = Memory
+        engine = Memory
         """,
     )
     sut.insert("numbers", NUMBERS)

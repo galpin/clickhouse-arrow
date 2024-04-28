@@ -43,5 +43,5 @@ def client(clickhouse):
     return create_client(clickhouse)
 
 
-def create_client(url):
-    return ch.Client(url, user="default", password="test")
+def create_client(url, **kwargs):
+    return ch.Client(url, user="default", password="test", **kwargs)
