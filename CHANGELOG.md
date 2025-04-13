@@ -1,3 +1,8 @@
+## New in 0.4.1
+
+* Change: Migrate project to `uv`.
+* Change: Update minimum Python version to 3.10
+
 ## New in 0.4.0
 
 * New: Add support for specifying settings when creating the client.
