@@ -64,4 +64,15 @@ table = client.read_table(
     settings={"output_format_arrow_string_as_string": 1},
 )
 print(table["col2"])
+
+# Use table schema
+table = client.read_table(
+    "SELECT * FROM test",
+    schema = pa.schema(
+        [
+            ("col1", pa.int64()),
+            ("col2", pa.binary()),
+        ]
+    ),
+)
 ```

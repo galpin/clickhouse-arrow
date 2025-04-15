@@ -62,6 +62,49 @@ def test_read_table_with_parameters(sut):
     assert actual == expected
 
 
+def test_read_table_raises_when_query_returns_no_rows(sut):
+    with pytest.raises(Exception) as actual:
+        sut.read_table("select * from numbers where ints < 0")
+    exception = actual.value
+    assert "Must pass schema, or at least one RecordBatch" in str(exception)
+
+
+def test_read_table_with_schema(sut):
+    expected = pa.Table.from_pydict(
+        {
+            "ints": [0, 1, 2],
+            "strs": [b"0", b"1", b"2"],
+        }
+    )
+    schema = pa.schema(
+        [
+            ("ints", pa.int64()),
+            ("strs", pa.binary()),
+        ]
+    )
+    actual = sut.read_table(
+        "select * from numbers limit 3",
+        schema=schema,
+    )
+    assert actual == expected
+    assert actual.schema == schema
+
+
+def test_read_table_with_schema_when_query_returns_no_rows(sut):
+    schema = pa.schema(
+        [
+            ("ints", pa.int64()),
+            ("strs", pa.binary()),
+        ]
+    )
+    actual = sut.read_table(
+        "select * from numbers where ints < 0",
+        schema=schema,
+    )
+    assert len(actual) == 0
+    assert actual.schema == schema
+
+
 def test_execute_raises_when_non_success_status(sut):
     with pytest.raises(ClickhouseException) as actual:
         sut.read_table("syntax error")

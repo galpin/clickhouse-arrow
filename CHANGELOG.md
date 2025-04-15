@@ -1,3 +1,7 @@
+## New in 0.5.0
+
+* New: Add optional `schema` parameter to `read_table`.
+
 ## New in 0.4.1
 
 * Change: Migrate project to `uv`.

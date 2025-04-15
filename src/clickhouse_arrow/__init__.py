@@ -101,6 +101,7 @@ class Client:
         query: str,
         params: dict[str, Any] = None,
         settings: dict[str, Any] = None,
+        schema: pa.schema = None,
     ) -> pa.Table:
         """
         Execute a query and read the result using the Arrow format
@@ -110,6 +111,7 @@ class Client:
             query: (str) The query to execute.
             params: (dict) The optional named query parameters (bound server-side).
             settings: (dict) The optional request settings.
+            schema: (schema) The optional table schema.
 
         Returns:
             A `pyarrow.Table` instance containing the results.
@@ -118,7 +120,7 @@ class Client:
             ClickhouseException: When a non-success response status was received.
         """
         batches = self.read_batches(query, params, settings)
-        return pa.Table.from_batches(batches)
+        return pa.Table.from_batches(batches, schema)
 
     def read_batches(
         self,
