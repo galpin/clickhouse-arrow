@@ -8,23 +8,30 @@
 """
 Benchmark comparing the old urllib3-based transport against the new
 Rust-backed transports (primp and rnet) when issuing many ClickHouse HTTP
-requests from a single thread.
+requests.
 
-Five modes are compared:
+Modes:
 
-  1. urllib3 (sync)              -- single thread issues N requests serially
-                                    on a urllib3.PoolManager. urllib3 has no
-                                    in-thread concurrency, so this is the
-                                    blocking baseline.
-  2. rnet (sync, BlockingClient) -- same shape as (1) but with rnet's
-                                    Rust-backed transport. Raw per-request
-                                    speedup, no concurrency.
-  3. rnet (async, concurrent)    -- one thread runs an asyncio loop and
-                                    fires N requests concurrently against
-                                    one rnet.Client.
-  4. primp (sync)                -- per-request equivalent of (2) using primp.
-  5. primp (async, concurrent)   -- async equivalent of (3) using
-                                    primp.AsyncClient.
+  Sync (single-threaded, sequential)
+    1. urllib3 (sync)              -- blocking baseline.
+    2. rnet (sync, BlockingClient) -- raw per-request speedup.
+    3. primp (sync)                -- raw per-request speedup.
+
+  Asyncio concurrent (single thread, N coroutines in flight)
+    4. rnet (async, concurrent)    -- one thread + asyncio + rnet.Client.
+    5. primp (async, concurrent)   -- one thread + asyncio + primp.AsyncClient.
+
+  Thread-pool concurrent (N OS threads, each making blocking calls)
+    6. urllib3 (threads)           -- shared PoolManager; this is the model
+                                      for a FlightRPC server where each
+                                      gRPC worker thread blocks on I/O.
+    7. rnet (sync, threads)        -- shared rnet.BlockingClient.
+    8. primp (sync, threads)       -- shared primp.Client.
+
+  The thread-pool tests answer two questions that asyncio cannot:
+    * is the client thread-safe under shared use, and
+    * does it release the GIL during socket I/O so threads actually run
+      in parallel rather than serialising on the interpreter lock.
 
 Run:
 
@@ -36,6 +43,7 @@ Run:
 import asyncio
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import primp
 import rnet
@@ -146,6 +154,43 @@ def bench_primp_async(query: str) -> tuple[float, int]:
     return asyncio.run(_bench_primp_async(query))
 
 
+# ---------------------------------------------------------------------------
+# Thread-pool benchmarks: N worker threads share one client. Models a Flight
+# RPC server where each gRPC worker thread blocks on the HTTP call.
+# ---------------------------------------------------------------------------
+
+def _threaded(make_call):
+    def run(query: str) -> tuple[float, int]:
+        body = query.encode()
+        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
+            list(pool.map(lambda _: make_call(body), range(WARMUP)))
+            t0 = time.perf_counter()
+            sizes = list(pool.map(lambda _: make_call(body), range(REQUESTS)))
+        return time.perf_counter() - t0, sum(sizes)
+    return run
+
+
+def bench_urllib3_threads(query: str) -> tuple[float, int]:
+    pool = urllib3.PoolManager(maxsize=CONCURRENCY)
+    def call(body):
+        return len(pool.urlopen("POST", URL, body=body, headers=HEADERS).data)
+    return _threaded(call)(query)
+
+
+def bench_rnet_sync_threads(query: str) -> tuple[float, int]:
+    client = rnet.BlockingClient()
+    def call(body):
+        return len(client.post(URL, headers=HEADERS, body=body).bytes())
+    return _threaded(call)(query)
+
+
+def bench_primp_sync_threads(query: str) -> tuple[float, int]:
+    client = primp.Client()
+    def call(body):
+        return len(client.post(URL, headers=HEADERS, content=body).read())
+    return _threaded(call)(query)
+
+
 def fmt_row(label: str, elapsed: float, total_bytes: int) -> str:
     rps = REQUESTS / elapsed
     mb = total_bytes / (1024 * 1024)
@@ -175,26 +220,35 @@ def main():
         print(f"--- query: {label} ---")
         urllib3_times = run_one("urllib3 (sync)", bench_urllib3, query)
         rnet_sync_times = run_one("rnet (sync)", bench_rnet_sync, query)
-        rnet_async_times = run_one("rnet (async, conc)", bench_rnet_async, query)
         primp_sync_times = run_one("primp (sync)", bench_primp_sync, query)
+        rnet_async_times = run_one("rnet (async, conc)", bench_rnet_async, query)
         primp_async_times = run_one("primp (async, conc)", bench_primp_async, query)
+        urllib3_thr_times = run_one("urllib3 (threads)", bench_urllib3_threads, query)
+        rnet_thr_times = run_one("rnet (threads)", bench_rnet_sync_threads, query)
+        primp_thr_times = run_one("primp (threads)", bench_primp_sync_threads, query)
         print()
         summary[label] = {
             "urllib3": min(urllib3_times),
             "rnet_sync": min(rnet_sync_times),
-            "rnet_async": min(rnet_async_times),
             "primp_sync": min(primp_sync_times),
+            "rnet_async": min(rnet_async_times),
             "primp_async": min(primp_async_times),
+            "urllib3_threads": min(urllib3_thr_times),
+            "rnet_threads": min(rnet_thr_times),
+            "primp_threads": min(primp_thr_times),
         }
 
-    print("=== Speedup vs urllib3 (best of run, higher is better) ===")
+    print("=== Speedup vs urllib3 sync (best of run, higher is better) ===")
     for label, m in summary.items():
         print(f"{label}:")
         base = m["urllib3"]
-        print(f"  rnet sync    : {base/m['rnet_sync']:.2f}x")
-        print(f"  rnet async   : {base/m['rnet_async']:.2f}x")
-        print(f"  primp sync   : {base/m['primp_sync']:.2f}x")
-        print(f"  primp async  : {base/m['primp_async']:.2f}x")
+        print(f"  rnet sync       : {base/m['rnet_sync']:.2f}x")
+        print(f"  primp sync      : {base/m['primp_sync']:.2f}x")
+        print(f"  rnet async      : {base/m['rnet_async']:.2f}x")
+        print(f"  primp async     : {base/m['primp_async']:.2f}x")
+        print(f"  urllib3 threads : {base/m['urllib3_threads']:.2f}x")
+        print(f"  rnet threads    : {base/m['rnet_threads']:.2f}x")
+        print(f"  primp threads   : {base/m['primp_threads']:.2f}x")
 
 
 if __name__ == "__main__":
