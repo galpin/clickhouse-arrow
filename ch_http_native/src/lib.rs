@@ -75,7 +75,7 @@ impl Client {
         let body = body.to_vec();
 
         let (status, bytes) = py
-            .allow_threads(move || -> Result<(u16, Vec<u8>), HttpError> {
+            .detach(move || -> Result<(u16, Vec<u8>), HttpError> {
                 let (status, mut reader) = send(&agent, &url, &headers, &body)?;
                 let mut buf = Vec::new();
                 reader
@@ -87,7 +87,7 @@ impl Client {
             })
             .map_err(map_http_err)?;
 
-        Ok((status, PyBytes::new_bound(py, &bytes)))
+        Ok((status, PyBytes::new(py, &bytes)))
     }
 
     /// Arrow-IPC POST: parse the response as an Arrow IPC stream in Rust
@@ -104,13 +104,14 @@ impl Client {
         let body = body.to_vec();
 
         let (status, reader) = py
-            .allow_threads(move || send(&agent, &url, &headers, &body))
+            .detach(move || send(&agent, &url, &headers, &body))
             .map_err(map_http_err)?;
 
         if status != 200 {
             // Drain the body so we can surface ClickHouse's error message.
             let mut buf = Vec::new();
-            let _ = reader.take(MAX_RESPONSE_BYTES).read_to_end(&mut buf);
+            let mut reader = reader;
+            let _ = reader.as_mut().take(MAX_RESPONSE_BYTES).read_to_end(&mut buf);
             return Err(PyRuntimeError::new_err(format!(
                 "HTTP {}: {}",
                 status,
@@ -182,7 +183,7 @@ impl RecordBatchStream {
 
         let ffi = FFI_ArrowArrayStream::new(reader);
         let name = CString::new("arrow_array_stream").unwrap();
-        PyCapsule::new_bound(py, ffi, Some(name))
+        PyCapsule::new(py, ffi, Some(name))
     }
 }
 
