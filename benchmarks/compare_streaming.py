@@ -8,24 +8,19 @@
 """
 Streaming-vs-buffered-vs-zero-copy benchmark.
 
-Measures three things on a query that returns many Arrow record batches:
+Measures, on a query that returns many Arrow record batches:
 
   * time-to-first-batch    -- how soon Python sees a useful batch.
   * total wall-clock       -- end-to-end time to consume the result.
-  * compression effect     -- whether zstd wire compression helps.
 
 Modes:
 
-  1. urllib3 (streaming)        -- preload_content=False; baseline.
+  1. urllib3 (streaming)        -- preload_content=False; original baseline.
   2. primp (buffered)           -- the previous production path.
   3. native (buffered)          -- ch_http_native, .post(), bytes -> pyarrow.
-  4. native (streaming)         -- ch_http_native, .post_streaming(),
-                                   pyarrow consumes via .read(n) -- still
-                                   pays for PyBytes round trips.
-  5. native (arrow C stream)    -- ch_http_native, .post_arrow_stream();
+  4. native (arrow C stream)    -- ch_http_native, .post_arrow_stream();
                                    IPC parsed in Rust, pyarrow gets batches
                                    via the C Data Interface (zero-copy).
-  6. native (arrow C stream + zstd HTTP compression)
 
 Run:
 
@@ -97,14 +92,6 @@ def open_stream_primp_buffered():
     return pa.ipc.open_stream(response.read())
 
 
-def open_stream_native_streaming():
-    client = ch_http_native.Client()
-    response = client.post_streaming(URL, HEADERS_LIST, QUERY)
-    if response.status_code != 200:
-        raise RuntimeError(response.read())
-    return pa.ipc.open_stream(response)
-
-
 def open_stream_native_buffered():
     client = ch_http_native.Client()
     status, body = client.post(URL, HEADERS_LIST, QUERY)
@@ -119,29 +106,11 @@ def open_stream_native_arrow_c_stream():
     return pa.RecordBatchReader.from_stream(stream)
 
 
-COMPRESSED_QUERY = (
-    "SELECT number, toString(number) AS s "
-    "FROM numbers(5000000) "
-    "SETTINGS max_block_size=1000 "
-    "FORMAT ArrowStream"
-).encode()
-COMPRESSED_URL = URL + "?enable_http_compression=1"
-COMPRESSED_HEADERS = HEADERS_LIST + [("Accept-Encoding", "zstd")]
-
-
-def open_stream_native_arrow_c_stream_zstd():
-    client = ch_http_native.Client()
-    stream = client.post_arrow_stream(COMPRESSED_URL, COMPRESSED_HEADERS, COMPRESSED_QUERY)
-    return pa.RecordBatchReader.from_stream(stream)
-
-
 MODES = {
-    "urllib3 (streaming)":          open_stream_urllib3,
-    "primp (buffered)":             open_stream_primp_buffered,
-    "native (buffered)":            open_stream_native_buffered,
-    "native (streaming)":           open_stream_native_streaming,
-    "native (arrow C stream)":      open_stream_native_arrow_c_stream,
-    "native (arrow C + zstd HTTP)": open_stream_native_arrow_c_stream_zstd,
+    "urllib3 (streaming)":      open_stream_urllib3,
+    "primp (buffered)":         open_stream_primp_buffered,
+    "native (buffered)":        open_stream_native_buffered,
+    "native (arrow C stream)":  open_stream_native_arrow_c_stream,
 }
 
 
@@ -150,7 +119,6 @@ def main():
     print(f"query: 5M rows of (Int64, String), max_block_size=1000\n")
 
     for name, fn in MODES.items():
-        # warm up
         for _ in range(WARMUP):
             _bench(fn)
         firsts = []
@@ -161,7 +129,7 @@ def main():
             firsts.append(tf)
             totals.append(tt)
         print(
-            f"  {name:<22} "
+            f"  {name:<24} "
             f"first batch: {min(firsts):>7.1f} ms (median {statistics.median(firsts):>7.1f})  "
             f"total: {min(totals):>7.0f} ms (median {statistics.median(totals):>7.0f})  "
             f"rows={rows} batches={batches}"

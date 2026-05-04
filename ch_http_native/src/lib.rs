@@ -1,23 +1,19 @@
 // Minimal HTTP client for clickhouse-arrow.
 //
-// Wraps `ureq::Agent` (blocking, no-tokio) behind a tiny PyO3 surface.
-// Three response shapes:
+// Wraps `ureq::Agent` (blocking, no-tokio) behind a tiny PyO3 surface:
 //
-//   * Client.post(...)            -- buffered: read the whole body into
-//                                    bytes and return (status, body).
-//   * Client.post_streaming(...)  -- streaming bytes: return a `Response`
-//                                    whose `read(n)` pulls bytes off the
-//                                    socket on demand. Compatible with
-//                                    `pyarrow.ipc.open_stream`.
-//   * Client.post_arrow_stream(.) -- zero-copy Arrow: parse the IPC stream
-//                                    in Rust with `arrow-ipc` and return
-//                                    a `RecordBatchStream` implementing
-//                                    `__arrow_c_stream__`. pyarrow consumes
-//                                    record batches via raw FFI pointers,
-//                                    no PyBytes round trips.
+//   * Client.post(url, headers, body) -> (status, bytes)
+//       Buffered POST. Used for execute() and insert(): the response body
+//       is read fully before returning.
 //
-// All paths transparently decompress responses with `Content-Encoding: zstd`
-// or `gzip`. All paths release the GIL for the duration of network I/O.
+//   * Client.post_arrow_stream(url, headers, body) -> RecordBatchStream
+//       Streaming Arrow-IPC POST. Used for open_stream() / read_batches().
+//       The IPC stream is parsed in Rust with arrow-ipc; the returned
+//       object exposes __arrow_c_stream__, so pyarrow consumes record
+//       batches via the C Data Interface (no PyBytes round trips).
+//
+// Both paths release the GIL during network I/O so a shared Client can
+// be driven from many Python threads in parallel.
 
 use std::ffi::CString;
 use std::io::Read;
@@ -27,7 +23,7 @@ use std::time::Duration;
 use arrow_array::ffi_stream::FFI_ArrowArrayStream;
 use arrow_array::RecordBatchReader;
 use arrow_ipc::reader::StreamReader;
-use pyo3::exceptions::{PyConnectionError, PyIOError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyConnectionError, PyIOError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyCapsule};
 
@@ -94,31 +90,8 @@ impl Client {
         Ok((status, PyBytes::new_bound(py, &bytes)))
     }
 
-    /// Streaming POST: return a `Response` reading the body lazily.
-    fn post_streaming(
-        &self,
-        py: Python<'_>,
-        url: &str,
-        headers: Vec<(String, String)>,
-        body: &[u8],
-    ) -> PyResult<Response> {
-        let agent = Arc::clone(&self.agent);
-        let url = url.to_owned();
-        let body = body.to_vec();
-
-        let (status, reader) = py
-            .allow_threads(move || send(&agent, &url, &headers, &body))
-            .map_err(map_http_err)?;
-
-        Ok(Response {
-            status,
-            reader: Mutex::new(Some(reader)),
-        })
-    }
-
-    /// Arrow-IPC POST: parse the response as an Arrow IPC stream in Rust.
-    /// The returned object exposes `__arrow_c_stream__` so pyarrow can pull
-    /// record batches via the C Data Interface (zero-copy).
+    /// Arrow-IPC POST: parse the response as an Arrow IPC stream in Rust
+    /// and return a `RecordBatchStream` exposing `__arrow_c_stream__`.
     fn post_arrow_stream(
         &self,
         py: Python<'_>,
@@ -130,17 +103,14 @@ impl Client {
         let url = url.to_owned();
         let body = body.to_vec();
 
-        let result = py.allow_threads(move || -> Result<(u16, BodyReader), HttpError> {
-            send(&agent, &url, &headers, &body)
-        });
-        let (status, reader) = result.map_err(map_http_err)?;
+        let (status, reader) = py
+            .allow_threads(move || send(&agent, &url, &headers, &body))
+            .map_err(map_http_err)?;
 
         if status != 200 {
             // Drain the body so we can surface ClickHouse's error message.
             let mut buf = Vec::new();
-            let _ = reader
-                .take(MAX_RESPONSE_BYTES)
-                .read_to_end(&mut buf);
+            let _ = reader.take(MAX_RESPONSE_BYTES).read_to_end(&mut buf);
             return Err(PyRuntimeError::new_err(format!(
                 "HTTP {}: {}",
                 status,
@@ -148,8 +118,6 @@ impl Client {
             )));
         }
 
-        // Build the IPC reader on the calling thread; the first read happens
-        // when pyarrow pulls the schema or first batch via the FFI stream.
         let stream_reader = StreamReader::try_new(reader, None)
             .map_err(|e| PyRuntimeError::new_err(format!("Arrow IPC: {e}")))?;
 
@@ -159,7 +127,6 @@ impl Client {
     }
 }
 
-/// Issue the request, follow `Content-Encoding`, and return a body reader.
 fn send(
     agent: &ureq::Agent,
     url: &str,
@@ -167,15 +134,8 @@ fn send(
     body: &[u8],
 ) -> Result<(u16, BodyReader), HttpError> {
     let mut req = agent.post(url);
-    let mut have_accept_encoding = false;
     for (name, value) in headers {
-        if name.eq_ignore_ascii_case("accept-encoding") {
-            have_accept_encoding = true;
-        }
         req = req.set(name, value);
-    }
-    if !have_accept_encoding {
-        req = req.set("Accept-Encoding", "zstd, gzip");
     }
     let response = match req.send_bytes(body) {
         Ok(r) => r,
@@ -183,129 +143,12 @@ fn send(
         Err(e) => return Err(HttpError::Transport(e.to_string())),
     };
     let status = response.status();
-    let encoding = response
-        .header("Content-Encoding")
-        .map(|s| s.to_ascii_lowercase());
-    let raw: BodyReader = Box::new(response.into_reader());
-    let reader: BodyReader = match encoding.as_deref() {
-        Some("zstd") => Box::new(
-            zstd::Decoder::new(raw)
-                .map_err(HttpError::Io)?,
-        ),
-        Some("gzip") => {
-            // ureq with the `gzip` feature would handle this transparently,
-            // but we keep the feature off and fall back to identity. If the
-            // server insists on gzip we error; users can switch to zstd.
-            return Err(HttpError::Transport(
-                "server returned Content-Encoding: gzip; request zstd instead".into(),
-            ));
-        }
-        _ => raw,
-    };
-    Ok((status, reader))
-}
-
-/// A streaming HTTP response. File-like enough for `pyarrow.ipc.open_stream`.
-#[pyclass(module = "ch_http_native._native", name = "Response")]
-struct Response {
-    #[pyo3(get)]
-    status: u16,
-    reader: Mutex<Option<BodyReader>>,
-}
-
-#[pymethods]
-impl Response {
-    #[getter]
-    fn status_code(&self) -> u16 {
-        self.status
-    }
-
-    #[pyo3(signature = (size = None))]
-    fn read<'py>(
-        &self,
-        py: Python<'py>,
-        size: Option<i64>,
-    ) -> PyResult<Bound<'py, PyBytes>> {
-        let mut guard = self
-            .reader
-            .lock()
-            .map_err(|_| PyIOError::new_err("response reader poisoned"))?;
-        let reader = guard
-            .as_mut()
-            .ok_or_else(|| PyIOError::new_err("response is closed"))?;
-
-        let buf = py
-            .allow_threads(|| -> std::io::Result<Vec<u8>> {
-                match size {
-                    None | Some(-1) => {
-                        let mut buf = Vec::new();
-                        reader
-                            .as_mut()
-                            .take(MAX_RESPONSE_BYTES)
-                            .read_to_end(&mut buf)?;
-                        Ok(buf)
-                    }
-                    Some(n) if n >= 0 => {
-                        let mut buf = vec![0u8; n as usize];
-                        let mut total = 0;
-                        while total < buf.len() {
-                            match reader.read(&mut buf[total..]) {
-                                Ok(0) => break,
-                                Ok(k) => total += k,
-                                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                                Err(e) => return Err(e),
-                            }
-                        }
-                        buf.truncate(total);
-                        Ok(buf)
-                    }
-                    Some(_) => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "size must be -1 or >= 0",
-                    )),
-                }
-            })
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::InvalidInput {
-                    PyValueError::new_err(e.to_string())
-                } else {
-                    PyIOError::new_err(e.to_string())
-                }
-            })?;
-
-        Ok(PyBytes::new_bound(py, &buf))
-    }
-
-    fn close(&self) {
-        if let Ok(mut guard) = self.reader.lock() {
-            *guard = None;
-        }
-    }
-
-    #[getter]
-    fn closed(&self) -> bool {
-        match self.reader.lock() {
-            Ok(g) => g.is_none(),
-            Err(_) => true,
-        }
-    }
-
-    fn readable(&self) -> bool {
-        !self.closed()
-    }
-
-    fn writable(&self) -> bool {
-        false
-    }
-
-    fn seekable(&self) -> bool {
-        false
-    }
+    Ok((status, Box::new(response.into_reader())))
 }
 
 /// Arrow IPC stream backed by a Rust `RecordBatchReader`. Exposes
-/// `__arrow_c_stream__` so consumers (pyarrow) can pull batches via the
-/// C Data Interface with no PyBytes round trips.
+/// `__arrow_c_stream__` so pyarrow can pull batches via the C Data
+/// Interface with no PyBytes round trips.
 #[pyclass(module = "ch_http_native._native", name = "RecordBatchStream")]
 struct RecordBatchStream {
     inner: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
@@ -314,8 +157,8 @@ struct RecordBatchStream {
 #[pymethods]
 impl RecordBatchStream {
     /// PyCapsule protocol: return a capsule named `arrow_array_stream`
-    /// pointing at an `FFI_ArrowArrayStream`. The reader is consumed; this
-    /// can only be called once per stream.
+    /// pointing at an `FFI_ArrowArrayStream`. Consumes the reader; can
+    /// only be called once per stream.
     #[pyo3(signature = (requested_schema = None))]
     fn __arrow_c_stream__<'py>(
         &self,
@@ -346,7 +189,6 @@ impl RecordBatchStream {
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Client>()?;
-    m.add_class::<Response>()?;
     m.add_class::<RecordBatchStream>()?;
     Ok(())
 }
