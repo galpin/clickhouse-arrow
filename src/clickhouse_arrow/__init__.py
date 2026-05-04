@@ -16,7 +16,7 @@ import collections.abc
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
-import primp
+import ch_http_native
 import pyarrow as pa
 from importlib.metadata import version
 
@@ -31,7 +31,7 @@ class Client:
        url: (str) The host name of the server to connect to, defaults to `http://localhost:8123/`.
        user: (str) The optional username to authenticate with, defaults to `default`.
        password: (str) The optional password to authenticate with, defaults to empty.
-       pool: (primp.Client) The optional HTTP client to use.
+       pool: (ch_http_native.Client) The optional HTTP client to use.
        default_settings: (dict) The optional default settings to include with every query.
     """
 
@@ -40,15 +40,15 @@ class Client:
         url: str = "http://localhost:8123/",
         user: str = "default",
         password: str = "",
-        pool: primp.Client = None,
+        pool: ch_http_native.Client = None,
         default_settings: dict[str, Any] = None,
     ):
         self._url = url
-        self._headers = {
-            "X-ClickHouse-User": user,
-            "X-ClickHouse-Key": password,
-        }
-        self._pool = pool or primp.Client()
+        self._headers = [
+            ("X-ClickHouse-User", user),
+            ("X-ClickHouse-Key", password),
+        ]
+        self._pool = pool or ch_http_native.Client()
         self._default_settings = default_settings
 
     def execute(
@@ -71,7 +71,11 @@ class Client:
         Raises:
             ClickhouseException: When a non-success response status was received.
         """
-        return self._execute(query, params, settings)
+        url, body, headers = self._build(query, params, settings)
+        status, response_body = self._pool.post(url, headers, body)
+        if status != 200:
+            raise ClickhouseException(status, response_body)
+        return response_body
 
     def open_stream(
         self,
@@ -93,8 +97,11 @@ class Client:
         Raises:
             ClickhouseException: When a non-success response status was received.
         """
-        body = self._execute(query, params, settings, format_="ArrowStream")
-        return pa.ipc.open_stream(body)
+        url, body, headers = self._build(query, params, settings, format_="ArrowStream")
+        response = self._pool.post_streaming(url, headers, body)
+        if response.status_code != 200:
+            raise ClickhouseException(response.status_code, response.read())
+        return pa.ipc.open_stream(response)
 
     def read_table(
         self,
@@ -167,27 +174,25 @@ class Client:
         columns = ", ".join(f"`{c}`" for c in data.column_names)
         query = f"INSERT INTO {table} ({columns}) FORMAT Arrow"
         url = append_url(self._url, query=query)
-        headers = self._headers | {"Content-Type": "application/octet-stream"}
-        body = serialize_ipc(data)
-        response = self._pool.post(url, headers=headers, content=body)
-        ensure_success_status(response)
+        headers = self._headers + [("Content-Type", "application/octet-stream")]
+        status, response_body = self._pool.post(url, headers, serialize_ipc(data))
+        if status != 200:
+            raise ClickhouseException(status, response_body)
 
-    def _execute(
+    def _build(
         self,
         query: str,
-        params: dict = None,
-        settings: dict = None,
-        format_: str = None,
-    ) -> bytes:
+        params: dict | None,
+        settings: dict | None,
+        format_: str | None = None,
+    ) -> tuple[str, bytes, list[tuple[str, str]]]:
         if format_:
             query += f" FORMAT {format_}"
         url_params = self._combine_settings(settings) or {}
         if params:
             url_params = url_params | {f"param_{k}": bind_param(v) for k, v in params.items()}
         url = append_url(self._url, **url_params) if url_params else self._url
-        response = self._pool.post(url, headers=self._headers, content=query.encode("utf-8"))
-        ensure_success_status(response)
-        return response.read()
+        return url, query.encode("utf-8"), self._headers
 
     def _combine_settings(
         self, settings: dict[str, Any] | None
@@ -239,11 +244,6 @@ def bind_param(value: Any, quote_strings=False) -> str:
     if isinstance(value, collections.abc.Iterable):
         return f"[{', '.join([bind_param(v, True) for v in value])}]"
     return str(value)
-
-
-def ensure_success_status(response: primp.Response):
-    if response.status_code != 200:
-        raise ClickhouseException(response.status_code, str(response.read()))
 
 
 def serialize_ipc(table: pa.Table) -> bytes:

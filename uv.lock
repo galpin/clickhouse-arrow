@@ -17,17 +17,23 @@ wheels = [
 ]
 
 [[package]]
+name = "ch-http-native"
+version = "0.1.0"
+source = { editable = "ch_http_native" }
+
+[[package]]
 name = "clickhouse-arrow"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
-    { name = "primp" },
+    { name = "ch-http-native" },
     { name = "pyarrow" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pandas" },
+    { name = "primp" },
     { name = "pytest" },
     { name = "pytest-benchmark" },
     { name = "pytest-docker" },
@@ -37,13 +43,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "primp", specifier = ">=1.0.0" },
+    { name = "ch-http-native", editable = "ch_http_native" },
     { name = "pyarrow", specifier = ">=11.0.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pandas", specifier = ">=1.5.3" },
+    { name = "primp", specifier = ">=1.0.0" },
     { name = "pytest", specifier = ">=7.2.2" },
     { name = "pytest-benchmark", specifier = ">=4.0.0" },
     { name = "pytest-docker", specifier = ">=1.0.1" },
