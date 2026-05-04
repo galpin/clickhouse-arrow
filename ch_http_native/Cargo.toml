@@ -1,0 +1,17 @@
+[package]
+name = "ch_http_native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ch_http_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+ureq = { version = "2.10", default-features = false }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

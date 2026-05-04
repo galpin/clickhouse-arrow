@@ -45,9 +45,12 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import ch_http_native
 import primp
 import rnet
 import urllib3
+
+HEADER_LIST = [("X-ClickHouse-User", "default"), ("X-ClickHouse-Key", "test")]
 
 
 URL = "http://localhost:8123/"
@@ -191,6 +194,32 @@ def bench_primp_sync_threads(query: str) -> tuple[float, int]:
     return _threaded(call)(query)
 
 
+# ---------------------------------------------------------------------------
+# Native (ureq + PyO3) bench: a hand-rolled Rust HTTP client with the
+# narrowest possible surface (POST bytes, return bytes). Sync only.
+# ---------------------------------------------------------------------------
+
+def bench_native_sync(query: str) -> tuple[float, int]:
+    client = ch_http_native.Client()
+    body = query.encode()
+    total_bytes = 0
+    for _ in range(WARMUP):
+        client.post(URL, HEADER_LIST, body)
+    t0 = time.perf_counter()
+    for _ in range(REQUESTS):
+        _, b = client.post(URL, HEADER_LIST, body)
+        total_bytes += len(b)
+    return time.perf_counter() - t0, total_bytes
+
+
+def bench_native_threads(query: str) -> tuple[float, int]:
+    client = ch_http_native.Client()
+    def call(body):
+        _, b = client.post(URL, HEADER_LIST, body)
+        return len(b)
+    return _threaded(call)(query)
+
+
 def fmt_row(label: str, elapsed: float, total_bytes: int) -> str:
     rps = REQUESTS / elapsed
     mb = total_bytes / (1024 * 1024)
@@ -221,21 +250,25 @@ def main():
         urllib3_times = run_one("urllib3 (sync)", bench_urllib3, query)
         rnet_sync_times = run_one("rnet (sync)", bench_rnet_sync, query)
         primp_sync_times = run_one("primp (sync)", bench_primp_sync, query)
+        native_sync_times = run_one("native (sync)", bench_native_sync, query)
         rnet_async_times = run_one("rnet (async, conc)", bench_rnet_async, query)
         primp_async_times = run_one("primp (async, conc)", bench_primp_async, query)
         urllib3_thr_times = run_one("urllib3 (threads)", bench_urllib3_threads, query)
         rnet_thr_times = run_one("rnet (threads)", bench_rnet_sync_threads, query)
         primp_thr_times = run_one("primp (threads)", bench_primp_sync_threads, query)
+        native_thr_times = run_one("native (threads)", bench_native_threads, query)
         print()
         summary[label] = {
             "urllib3": min(urllib3_times),
             "rnet_sync": min(rnet_sync_times),
             "primp_sync": min(primp_sync_times),
+            "native_sync": min(native_sync_times),
             "rnet_async": min(rnet_async_times),
             "primp_async": min(primp_async_times),
             "urllib3_threads": min(urllib3_thr_times),
             "rnet_threads": min(rnet_thr_times),
             "primp_threads": min(primp_thr_times),
+            "native_threads": min(native_thr_times),
         }
 
     print("=== Speedup vs urllib3 sync (best of run, higher is better) ===")
@@ -244,11 +277,13 @@ def main():
         base = m["urllib3"]
         print(f"  rnet sync       : {base/m['rnet_sync']:.2f}x")
         print(f"  primp sync      : {base/m['primp_sync']:.2f}x")
+        print(f"  native sync     : {base/m['native_sync']:.2f}x")
         print(f"  rnet async      : {base/m['rnet_async']:.2f}x")
         print(f"  primp async     : {base/m['primp_async']:.2f}x")
         print(f"  urllib3 threads : {base/m['urllib3_threads']:.2f}x")
         print(f"  rnet threads    : {base/m['rnet_threads']:.2f}x")
         print(f"  primp threads   : {base/m['primp_threads']:.2f}x")
+        print(f"  native threads  : {base/m['native_threads']:.2f}x")
 
 
 if __name__ == "__main__":
