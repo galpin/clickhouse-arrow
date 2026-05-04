@@ -1,10 +1,11 @@
 [package]
-name = "ch_http_native"
+name = "clickhouse_arrow_native"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
-name = "ch_http_native"
+name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]

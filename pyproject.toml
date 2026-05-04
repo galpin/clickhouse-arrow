@@ -11,7 +11,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pyarrow>=11.0.0",
-    "ch_http_native>=0.1.0"
 ]
 
 [dependency-groups]
@@ -22,12 +21,16 @@ dev = [
     "pandas>=1.5.3",
     "urllib3<2.0.0",
     "rnet>=2.0.0",
-    "primp>=1.0.0"
+    "primp>=1.0.0",
+    "maturin>=1.4,<2.0",
 ]
 
-[tool.uv.sources]
-ch_http_native = { path = "ch_http_native", editable = true }
+[tool.maturin]
+python-source = "src"
+manifest-path = "ch_http_native/Cargo.toml"
+module-name = "clickhouse_arrow._native"
+features = ["pyo3/extension-module"]
 
 [build-system]
-requires = ["uv_build>=0.6,<0.7"]
-build-backend = "uv_build"
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"

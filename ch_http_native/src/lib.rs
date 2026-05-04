@@ -43,7 +43,7 @@ fn map_http_err(e: HttpError) -> PyErr {
 
 type BodyReader = Box<dyn Read + Send>;
 
-#[pyclass(module = "ch_http_native._native", name = "Client", frozen)]
+#[pyclass(module = "clickhouse_arrow._native", name = "Client", frozen)]
 struct Client {
     agent: Arc<ureq::Agent>,
 }
@@ -149,7 +149,7 @@ fn send(
 /// Arrow IPC stream backed by a Rust `RecordBatchReader`. Exposes
 /// `__arrow_c_stream__` so pyarrow can pull batches via the C Data
 /// Interface with no PyBytes round trips.
-#[pyclass(module = "ch_http_native._native", name = "RecordBatchStream")]
+#[pyclass(module = "clickhouse_arrow._native", name = "RecordBatchStream")]
 struct RecordBatchStream {
     inner: Mutex<Option<Box<dyn RecordBatchReader + Send>>>,
 }

@@ -32,7 +32,7 @@ Run:
 import statistics
 import time
 
-import ch_http_native
+from clickhouse_arrow import _native as ch_http_native
 import primp
 import pyarrow as pa
 import urllib3

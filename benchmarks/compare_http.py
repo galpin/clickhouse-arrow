@@ -45,7 +45,7 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-import ch_http_native
+from clickhouse_arrow import _native as ch_http_native
 import primp
 import rnet
 import urllib3

@@ -16,9 +16,10 @@ import collections.abc
 from typing import Any, Iterator
 from urllib.parse import urlencode
 
-import ch_http_native
 import pyarrow as pa
 from importlib.metadata import version
+
+from . import _native as _http
 
 __version__ = version(__package__)
 
@@ -31,7 +32,7 @@ class Client:
        url: (str) The host name of the server to connect to, defaults to `http://localhost:8123/`.
        user: (str) The optional username to authenticate with, defaults to `default`.
        password: (str) The optional password to authenticate with, defaults to empty.
-       pool: (ch_http_native.Client) The optional HTTP client to use.
+       pool: (_http.Client) The optional HTTP client to use.
        default_settings: (dict) The optional default settings to include with every query.
     """
 
@@ -40,7 +41,7 @@ class Client:
         url: str = "http://localhost:8123/",
         user: str = "default",
         password: str = "",
-        pool: ch_http_native.Client = None,
+        pool: _http.Client = None,
         default_settings: dict[str, Any] = None,
     ):
         self._url = url
@@ -48,7 +49,7 @@ class Client:
             ("X-ClickHouse-User", user),
             ("X-ClickHouse-Key", password),
         ]
-        self._pool = pool or ch_http_native.Client()
+        self._pool = pool or _http.Client()
         self._default_settings = default_settings
 
     def execute(
