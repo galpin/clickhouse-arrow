@@ -47,9 +47,14 @@ class Client:
         self._headers = [
             ("X-ClickHouse-User", user),
             ("X-ClickHouse-Key", password),
+            ("Accept-Encoding", "zstd"),
         ]
         self._pool = pool or ch_http_native.Client()
-        self._default_settings = default_settings
+        # `enable_http_compression=1` lets ClickHouse honor Accept-Encoding.
+        defaults = {"enable_http_compression": 1}
+        if default_settings:
+            defaults = defaults | default_settings
+        self._default_settings = defaults
 
     def execute(
         self,
@@ -98,10 +103,21 @@ class Client:
             ClickhouseException: When a non-success response status was received.
         """
         url, body, headers = self._build(query, params, settings, format_="ArrowStream")
-        response = self._pool.post_streaming(url, headers, body)
-        if response.status_code != 200:
-            raise ClickhouseException(response.status_code, response.read())
-        return pa.ipc.open_stream(response)
+        try:
+            stream = self._pool.post_arrow_stream(url, headers, body)
+        except RuntimeError as e:
+            # Surface ClickHouse error (post_arrow_stream raises RuntimeError
+            # for non-200 responses with the body in the message).
+            msg = str(e)
+            if msg.startswith("HTTP "):
+                status_str, _, body_str = msg[5:].partition(": ")
+                try:
+                    status = int(status_str)
+                except ValueError:
+                    raise
+                raise ClickhouseException(status, body_str) from None
+            raise
+        return pa.RecordBatchReader.from_stream(stream)
 
     def read_table(
         self,

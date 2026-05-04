@@ -10,6 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 ureq = { version = "2.10", default-features = false }
+zstd = { version = "0.13", default-features = false }
+arrow-array = { version = "53", features = ["ffi"] }
+arrow-ipc = { version = "53", features = ["lz4", "zstd"] }
+arrow-schema = "53"
 
 [profile.release]
 lto = "thin"
