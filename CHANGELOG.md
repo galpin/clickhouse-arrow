@@ -1,6 +1,9 @@
 ## New in 0.5.0
 
 * New: Add optional `schema` parameter to `read_table`.
+* Change: Replace `urllib3` HTTP transport with the Rust-based `primp` library.
+  The `pool` argument now accepts a `primp.Client` instead of a
+  `urllib3.PoolManager`.
 
 ## New in 0.4.1
 

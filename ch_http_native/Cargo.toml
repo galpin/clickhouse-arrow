@@ -1,0 +1,20 @@
+[package]
+name = "clickhouse_arrow_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module"] }
+ureq = { version = "2.10", default-features = false }
+arrow-array = { version = "53", features = ["ffi"] }
+arrow-ipc = { version = "53", features = ["lz4", "zstd"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
