@@ -47,14 +47,9 @@ class Client:
         self._headers = [
             ("X-ClickHouse-User", user),
             ("X-ClickHouse-Key", password),
-            ("Accept-Encoding", "zstd"),
         ]
         self._pool = pool or ch_http_native.Client()
-        # `enable_http_compression=1` lets ClickHouse honor Accept-Encoding.
-        defaults = {"enable_http_compression": 1}
-        if default_settings:
-            defaults = defaults | default_settings
-        self._default_settings = defaults
+        self._default_settings = default_settings
 
     def execute(
         self,
